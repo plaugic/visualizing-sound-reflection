@@ -66,13 +66,17 @@ Follow these instructions to get a copy of the project up and running on your lo
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/visualizing-sound-reflection.git
-    cd your_project_directory
+    cd visualizing-sound-reflection
     ```
 
 2.  **Copy `wasm_exec.js`:**
-    This file is required to run Go WASM modules. Copy it from your Go installation's `misc/wasm` directory into the project root.
+    A. This file is required to run Go WASM modules. If you are have a Go version 1.23 or higher, copy it from your Go installation's `misc/wasm` directory into the project root.
     ```bash
     cp $(go env GOROOT)/misc/wasm/wasm_exec.js .
+    ```
+    B. If you are have a Go version 1.23 or higher, the wasm_exec.js file that must be copied into your project will be found elsewhere. Copy it from your Go installation's `lib/wasm` directory into the project root.
+    ```bash
+    cp $(go env GOROOT)/lib/wasm/wasm_exec.js .
     ```
 
 3.  **Build the WebAssembly Module:**
