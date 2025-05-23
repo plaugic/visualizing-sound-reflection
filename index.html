@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go WASM 3D Sound Modeler</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="wasm_exec.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: 'Inter', sans-serif; background-color: #f0f0f0; }
+        #mainContainer { display: flex; width: 100vw; height: 100vh; }
+        #webglCanvas { flex-grow: 1; display: block; cursor: grab; }
+        #webglCanvas.grabbing { cursor: grabbing; }
+        .controls { width: 300px; background-color: rgba(255,255,255,0.9); padding: 15px; overflow-y: auto; box-shadow: -2px 0 5px rgba(0,0,0,0.1); display: block; flex-shrink: 0; }
+        .controls label, .controls button, .controls div, .controls select { display: block; margin-bottom: 10px; }
+        .controls input[type="range"] { width: calc(100% - 70px); display: inline-block; vertical-align: middle; }
+        .controls input[type="checkbox"] { margin-right: 5px; vertical-align: middle;}
+        .controls button { background-color: #4A90E2; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; width: 100%;}
+        .controls button:hover { background-color: #357ABD; }
+        .controls button.active-auto-opt { background-color: #D9534F; }
+        .controls button.active-auto-opt:hover { background-color: #C9302C; }
+        .controls select { width: 100%; padding: 8px; border-radius: 5px; border: 1px solid #ccc; background-color: white;}
+
+        .slider-value { font-size: 0.9em; color: #333; margin-left: 5px; display: inline-block; width: 55px; text-align: right; }
+        .legend { margin-top: 15px; padding-top: 10px; border-top: 1px solid #ddd; }
+        .legend-item { display: flex; align-items: center; margin-bottom: 5px; font-size: 0.9em; }
+        .legend-color-box { width: 14px; height: 14px; margin-right: 8px; border: 1px solid #ccc;}
+        #toggleControlsButton { position: fixed; top: 10px; right: 10px; z-index: 1000; background-color: #4A90E2; color: white; border: none; padding: 8px 12px; border-radius: 5px; cursor: pointer; font-size: 0.9em;}
+        #toggleControlsButton:hover { background-color: #357ABD; }
+        #loadingIndicator {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            font-size: 1.5em; color: #333; background-color: rgba(255,255,255,0.8); padding: 20px; border-radius: 8px; z-index: 1001;
+        }
+        .stats-display { margin-top:15px; padding-top:10px; border-top: 1px solid #ddd; font-size:0.9em;}
+        .learning-stats p { margin-bottom: 3px;}
+        #recordsDisplay { max-height: 150px; overflow-y: auto; border: 1px solid #eee; padding: 5px; margin-top: 5px; font-size: 0.8em;}
+        #recordsDisplay button { font-size: 0.9em; padding: 2px 5px; margin-left: 5px; background-color: #5cb85c; border-color: #4cae4c; }
+        #recordsDisplay button:hover { background-color: #449d44; }
+        #recordsDisplay li { margin-bottom: 3px; }
+
+        /* Custom Modal Styles */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 1002;}
+        .modal-content { background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.2); text-align: center;}
+        .modal-content p { margin-bottom: 15px; }
+        .modal-content button { margin: 0 10px; padding: 8px 15px; width: auto;}
+    </style>
+</head>
+<body>
+    <div id="loadingIndicator">Loading Go WASM...</div>
+    <button id="toggleControlsButton">Hide Controls</button>
+
+    <div id="customConfirmationModal" class="modal-overlay">
+        <div class="modal-content">
+            <p id="modalMessageText">Are you sure?</p>
+            <button id="modalConfirmButton" class="bg-red-500 hover:bg-red-700">Yes</button>
+            <button id="modalCancelButton" class="bg-gray-300 hover:bg-gray-400">No</button>
+        </div>
+    </div>
+
+    <div id="mainContainer">
+        <canvas id="webglCanvas"></canvas>
+        <div id="controlsPanel" class="controls">
+            <h3 class="text-lg font-semibold mb-3">Controls</h3>
+
+            <p class="text-sm font-medium">Sound Source:</p>
+            <div><label for="soundSourceX" class="text-xs">X: <input type="range" id="soundSourceX" min="-19" max="19" value="0" step="0.1"><span id="soundSourceXValue" class="slider-value">0.0</span></label></div>
+            <div><label for="soundSourceY" class="text-xs">Y: <input type="range" id="soundSourceY" min="0.5" max="9.5" value="1.5" step="0.1"><span id="soundSourceYValue" class="slider-value">1.5</span></label></div>
+            <div><label for="soundSourceZ" class="text-xs">Z: <input type="range" id="soundSourceZ" min="-19" max="19" value="5" step="0.1"><span id="soundSourceZValue" class="slider-value">5.0</span></label></div>
+            <hr class="my-4 border-gray-300">
+            <p class="text-sm font-medium">Listener:</p>
+            <div><label for="listenerX" class="text-xs">X: <input type="range" id="listenerX" min="-19" max="19" value="0" step="0.1"><span id="listenerXValue" class="slider-value">0.0</span></label></div>
+            <div><label for="listenerY" class="text-xs">Y: <input type="range" id="listenerY" min="0.5" max="9.5" value="1.5" step="0.1"><span id="listenerYValue" class="slider-value">1.5</span></label></div>
+            <div><label for="listenerZ" class="text-xs">Z: <input type="range" id="listenerZ" min="-19" max="19" value="-5" step="0.1"><span id="listenerZValue" class="slider-value">-5.0</span></label></div>
+            <hr class="my-4 border-gray-300">
+            <p class="text-sm font-medium">Ray Settings:</p>
+            <div><label for="numRaysSlider" class="text-xs">Number of Rays: <input type="range" id="numRaysSlider" min="100" max="100000" value="1000" step="100"><span id="numRaysValue" class="slider-value">1000</span></label></div>
+            <div><label for="rayOpacitySlider" class="text-xs">Initial Opacity: <input type="range" id="rayOpacitySlider" min="0.01" max="1" value="0.6" step="0.01"><span id="rayOpacityValue" class="slider-value">0.60</span></label></div>
+            <div><label for="maxBouncesSlider" class="text-xs">Max Bounces: <input type="range" id="maxBouncesSlider" min="0" max="100" value="3" step="1"><span id="maxBouncesValue" class="slider-value">3</span></label></div>
+            <div><label for="volumeSlider" class="text-xs">Volume (Atten.): <input type="range" id="volumeSlider" min="0.5" max="1.0" value="0.85" step="0.01"><span id="volumeValue" class="slider-value">0.85</span></label></div>
+            <div><label for="showOnlyListenerRaysToggle" class="text-xs"><input type="checkbox" id="showOnlyListenerRaysToggle" checked> Show only listener rays</label></div>
+
+
+            <hr class="my-4 border-gray-300">
+            <p class="text-sm font-medium">Environment:</p>
+            <div><label for="wallOpacitySlider" class="text-xs">Wall Opacity: <input type="range" id="wallOpacitySlider" min="0.0" max="1.0" value="1.0" step="0.01"><span id="wallOpacityValue" class="slider-value">1.00</span></label></div>
+
+            <hr class="my-4 border-gray-300">
+            <p class="text-sm font-medium">Performance & Learning:</p>
+            <div><label for="debounceTimeSlider" class="text-xs">UI Debounce (ms): <input type="range" id="debounceTimeSlider" min="0" max="2000" value="500" step="10"><span id="debounceTimeValue" class="slider-value">500</span></label></div>
+            <div><label for="explorationFactorSlider" class="text-xs">Exploration Factor: <input type="range" id="explorationFactorSlider" min="0.1" max="5.0" value="1.0" step="0.1"><span id="explorationFactorValue" class="slider-value">1.0</span></label></div>
+
+            <button id="toggleLearningButton" class="mt-2">Start Learning (Coop. Maximize)</button>
+
+
+            <hr class="my-4 border-gray-300">
+            <button id="manualVisualizeButton">Visualize Sound (Manual)</button>
+            <button id="clearRaysButton" class="mt-2">Clear Rays</button>
+
+            <div class="stats-display">
+                <p>Listener Ray Score: <span id="listenerRayCountValue" class="font-semibold">0</span></p>
+            </div>
+            <div class="stats-display learning-stats">
+                <p>Learning Iteration: <span id="learningIterationValue" class="font-semibold">0 / 50000</span></p>
+                <p>Best Score Found: <span id="bestHitsValue" class="font-semibold">0</span></p>
+            </div>
+            <div class="stats-display">
+                <p class="text-sm font-medium mt-2">Best Score Records:</p>
+                <ul id="recordsDisplay"><li>No records yet.</li></ul>
+            </div>
+
+
+            <div id="rayLegend" class="legend">
+                {/* Legend items will be populated by JavaScript */}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function initializeApp() {
+            if (!WebAssembly.instantiateStreaming) {
+                WebAssembly.instantiateStreaming = async (resp, importObject) => {
+                    const source = await (await resp).arrayBuffer();
+                    return await WebAssembly.instantiate(source, importObject);
+                };
+            }
+
+            const go = new Go();
+            let wasmModule, wasmInstance;
+
+            let threeScene, threeCamera, threeRenderer;
+            let objectGroup, rayGroupThree;
+            let canvasElement;
+            let threeSoundSourceMesh = null;
+            let threeListenerMesh = null;
+
+            const dragRaycaster = new THREE.Raycaster();
+            const mouseNDC = new THREE.Vector2();
+            let selectedDraggableObject = null;
+            let dragPlane = new THREE.Plane();
+            let dragOffset = new THREE.Vector3();
+            let dragIntersection = new THREE.Vector3();
+
+            let isCameraOrbiting = false;
+            let previousMouseCanvasPosition = { x: 0, y: 0 };
+
+            // Modal elements
+            const confirmationModal = document.getElementById('customConfirmationModal');
+            const modalMessageText = document.getElementById('modalMessageText');
+            const modalConfirmButton = document.getElementById('modalConfirmButton');
+            const modalCancelButton = document.getElementById('modalCancelButton');
+            let currentModalAction = null;
+
+
+            async function loadWasm() {
+                try {
+                    const result = await WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject);
+                    wasmModule = result.module;
+                    wasmInstance = result.instance;
+                    console.log("WASM module instantiated. Running Go program...");
+                    go.run(wasmInstance);
+                } catch (err) {
+                    console.error("Loading WASM failed:", err);
+                    document.getElementById('loadingIndicator').textContent = "Error loading WASM. Check console.";
+                }
+            }
+
+            window.goWasmReady = () => {
+                console.log("Go WASM reported ready.");
+                document.getElementById('loadingIndicator').style.display = 'none';
+                initThreeJS();
+                setupEventListeners();
+                if (window.goTriggerVisualizeSound) {
+                     window.goTriggerVisualizeSound();
+                } else {
+                    console.error("goTriggerVisualizeSound not found on window after GoWasmReady");
+                }
+                animate();
+                setTimeout(onWindowResize, 150); // Ensure layout is stable before first resize
+            };
+
+            window.renderSceneJS = (objectsData, raysData) => {
+                updateThreeScene(objectsData, raysData);
+            };
+
+            window.clearRaysJS = () => {
+                if (rayGroupThree) {
+                    while (rayGroupThree.children.length > 0) {
+                        const obj = rayGroupThree.children[0];
+                        rayGroupThree.remove(obj);
+                        if (obj.geometry) obj.geometry.dispose();
+                        if (obj.material) obj.material.dispose();
+                    }
+                }
+            };
+
+            window.requestRender = () => { /* The animate loop handles rendering continuously */ };
+
+            window.updateListenerRayCountJS = (count) => {
+                const countElement = document.getElementById('listenerRayCountValue');
+                if (countElement) {
+                    countElement.textContent = count;
+                }
+            };
+
+            window.updateSliderValuesForObject = (objectName, x, y, z) => {
+                const xVal = parseFloat(x).toFixed(1);
+                const yVal = parseFloat(y).toFixed(1);
+                const zVal = parseFloat(z).toFixed(1);
+
+                if (objectName === "SoundSource") {
+                    document.getElementById('soundSourceX').value = xVal;
+                    document.getElementById('soundSourceXValue').textContent = xVal;
+                    document.getElementById('soundSourceY').value = yVal;
+                    document.getElementById('soundSourceYValue').textContent = yVal;
+                    document.getElementById('soundSourceZ').value = zVal;
+                    document.getElementById('soundSourceZValue').textContent = zVal;
+                } else if (objectName === "Listener") {
+                    document.getElementById('listenerX').value = xVal;
+                    document.getElementById('listenerXValue').textContent = xVal;
+                    document.getElementById('listenerY').value = yVal;
+                    document.getElementById('listenerYValue').textContent = yVal;
+                    document.getElementById('listenerZ').value = zVal;
+                    document.getElementById('listenerZValue').textContent = zVal;
+                }
+            };
+
+            window.updateLearningButton = (isRunning, buttonText) => {
+                const btn = document.getElementById("toggleLearningButton");
+                if (btn) {
+                    console.log(`JS: updateLearningButton called. isRunning: ${isRunning}, buttonText: "${buttonText}"`);
+                    btn.textContent = buttonText;
+                    if (isRunning) {
+                        btn.classList.add("active-auto-opt");
+                    } else {
+                        btn.classList.remove("active-auto-opt");
+                    }
+                } else {
+                     console.error("JS: toggleLearningButton not found in updateLearningButton!");
+                }
+            };
+
+            window.updateLearningProgress = (currentIter, maxIter, bestScore) => {
+                const iterElement = document.getElementById('learningIterationValue');
+                const scoreElement = document.getElementById('bestHitsValue');
+                if (iterElement) iterElement.textContent = `${currentIter} / ${maxIter}`;
+                if (scoreElement) scoreElement.textContent = bestScore;
+            };
+
+            window.updateRecordsDisplay = (records) => {
+                const displayDiv = document.getElementById("recordsDisplay");
+                if (!displayDiv) return;
+                displayDiv.innerHTML = ""; // Clear previous
+                if (!records || records.length === 0) {
+                    displayDiv.innerHTML = "<li>No records yet.</li>";
+                    return;
+                }
+                const ul = document.createElement("ul");
+                records.forEach((rec, index) => {
+                    const li = document.createElement("li");
+                    li.textContent = `Rec ${index + 1}: Score ${rec.score} (Iter: ${rec.iteration}, Rays: ${rec.numRays})`;
+                    const button = document.createElement("button");
+                    button.textContent = "Apply";
+                    button.onclick = () => {
+                        if (window.goApplyRecordedSettingsByIndex) {
+                            window.goApplyRecordedSettingsByIndex(index);
+                        }
+                    };
+                    li.appendChild(button);
+                    ul.appendChild(li);
+                });
+                displayDiv.appendChild(ul);
+            };
+
+            window.updateAllUISliders = (
+                numRays, initialRayOpacity, maxBounces, volumeAttenuationFactor, explorationFactor,
+                ssX, ssY, ssZ, lX, lY, lZ, showOnlyListenerRaysVal
+            ) => {
+                document.getElementById('numRaysSlider').value = numRays;
+                document.getElementById('numRaysValue').textContent = numRays;
+                document.getElementById('rayOpacitySlider').value = initialRayOpacity.toFixed(2);
+                document.getElementById('rayOpacityValue').textContent = initialRayOpacity.toFixed(2);
+                document.getElementById('maxBouncesSlider').value = maxBounces;
+                document.getElementById('maxBouncesValue').textContent = maxBounces;
+                document.getElementById('volumeSlider').value = volumeAttenuationFactor.toFixed(2);
+                document.getElementById('volumeValue').textContent = volumeAttenuationFactor.toFixed(2);
+                document.getElementById('explorationFactorSlider').value = explorationFactor.toFixed(1);
+                document.getElementById('explorationFactorValue').textContent = explorationFactor.toFixed(1);
+
+                document.getElementById('soundSourceX').value = ssX.toFixed(1);
+                document.getElementById('soundSourceXValue').textContent = ssX.toFixed(1);
+                document.getElementById('soundSourceY').value = ssY.toFixed(1);
+                document.getElementById('soundSourceYValue').textContent = ssY.toFixed(1);
+                document.getElementById('soundSourceZ').value = ssZ.toFixed(1);
+                document.getElementById('soundSourceZValue').textContent = ssZ.toFixed(1);
+
+                document.getElementById('listenerX').value = lX.toFixed(1);
+                document.getElementById('listenerXValue').textContent = lX.toFixed(1);
+                document.getElementById('listenerY').value = lY.toFixed(1);
+                document.getElementById('listenerYValue').textContent = lY.toFixed(1);
+                document.getElementById('listenerZ').value = lZ.toFixed(1);
+                document.getElementById('listenerZValue').textContent = lZ.toFixed(1);
+
+                document.getElementById('showOnlyListenerRaysToggle').checked = showOnlyListenerRaysVal;
+                // Potentially update wall opacity slider too if it's part of best settings
+                // document.getElementById('wallOpacitySlider').value = wallOpacity.toFixed(2);
+                // document.getElementById('wallOpacityValue').textContent = wallOpacity.toFixed(2);
+            };
+
+
+            function initThreeJS() {
+                canvasElement = document.getElementById('webglCanvas');
+
+                threeScene = new THREE.Scene();
+                threeScene.background = new THREE.Color(0x87ceeb); // Light blue sky
+                threeScene.fog = new THREE.Fog(0x87ceeb, 20, 100); // Fog matches background
+
+                const aspect = canvasElement.clientWidth / canvasElement.clientHeight;
+                threeCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
+                threeCamera.position.set(0, 10, 30); // Elevated and back view
+                threeCamera.lookAt(0, 2, 0); // Look towards center of room, slightly down
+
+                threeRenderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
+                threeRenderer.setSize(canvasElement.clientWidth, canvasElement.clientHeight);
+                threeRenderer.shadowMap.enabled = true;
+                threeRenderer.shadowMap.type = THREE.PCFSoftShadowMap; // Softer shadows
+
+                setupMouseControls();
+
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.7); // Softer ambient
+                threeScene.add(ambientLight);
+
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.9); // Brighter directional
+                directionalLight.position.set(15, 30, 20); // Angled light
+                directionalLight.castShadow = true;
+                directionalLight.shadow.mapSize.width = 2048; // Higher res shadow map
+                directionalLight.shadow.mapSize.height = 2048;
+                // Optional: Adjust shadow camera frustum for tighter fit if needed
+                // directionalLight.shadow.camera.left = -50;
+                // directionalLight.shadow.camera.right = 50;
+                // directionalLight.shadow.camera.top = 50;
+                // directionalLight.shadow.camera.bottom = -50;
+                threeScene.add(directionalLight);
+
+                objectGroup = new THREE.Group();
+                threeScene.add(objectGroup);
+                rayGroupThree = new THREE.Group();
+                threeScene.add(rayGroupThree);
+
+                onWindowResize(); // Initial resize
+            }
+
+            function updateThreeScene(objectsData, raysData) {
+                if (!objectGroup || !rayGroupThree) return;
+
+                threeSoundSourceMesh = null; // Reset references
+                threeListenerMesh = null;
+
+                // Clear existing objects more robustly
+                while (objectGroup.children.length > 0) {
+                    const obj = objectGroup.children[0];
+                    objectGroup.remove(obj);
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) {
+                        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                        else obj.material.dispose();
+                    }
+                }
+                window.clearRaysJS(); // Clear existing rays
+
+                if (objectsData) {
+                    objectsData.forEach(objData => {
+                        let geometry, material, mesh;
+                        const color = new THREE.Color().setRGB(objData.color.r, objData.color.g, objData.color.b);
+
+                        material = new THREE.MeshStandardMaterial({
+                            color: color,
+                            opacity: objData.color.a,
+                            transparent: objData.color.a < 1.0,
+                            roughness: (objData.name === "Ground") ? 0.8 : 0.7, 
+                            metalness: (objData.name === "Ground") ? 0.3 : 0.1,
+                        });
+
+                        if (objData.type === "box") {
+                            geometry = new THREE.BoxGeometry(objData.scale.x, objData.scale.y, objData.scale.z);
+                        } else if (objData.type === "sphere") {
+                            geometry = new THREE.SphereGeometry(objData.scale.x, 16, 16); // Radius from scale.x
+                        } else { return; } // Unknown type
+
+                        mesh = new THREE.Mesh(geometry, material);
+                        mesh.name = objData.name; // For identification
+                        mesh.userData.isDraggable = (objData.name === "SoundSource" || objData.name === "Listener");
+                        mesh.position.set(objData.position.x, objData.position.y, objData.position.z);
+                        mesh.rotation.set(
+                            objData.rotation.x * Math.PI / 180, // Convert degrees to radians
+                            objData.rotation.y * Math.PI / 180,
+                            objData.rotation.z * Math.PI / 180
+                        );
+                        mesh.castShadow = (objData.name !== "Ground" && objData.name !== "Ceiling");
+                        mesh.receiveShadow = true; // Most objects should receive shadows
+                        objectGroup.add(mesh);
+
+                        if (objData.name === "SoundSource") {
+                            threeSoundSourceMesh = mesh;
+                        } else if (objData.name === "Listener") {
+                            threeListenerMesh = mesh;
+                        }
+                    });
+                }
+
+                if (raysData) {
+                    raysData.forEach(rayData => {
+                        const points = [
+                            new THREE.Vector3(rayData.start.x, rayData.start.y, rayData.start.z),
+                            new THREE.Vector3(rayData.end.x, rayData.end.y, rayData.end.z)
+                        ];
+                        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                        // Convert hex number to r,g,b components
+                        const r = (rayData.color >> 16 & 0xFF) / 255;
+                        const g = (rayData.color >> 8 & 0xFF) / 255;
+                        const b = (rayData.color & 0xFF) / 255;
+                        const material = new THREE.LineBasicMaterial({
+                            color: new THREE.Color(r,g,b),
+                            transparent: true,
+                            opacity: rayData.opacity, 
+                            linewidth: 1 // Note: linewidth > 1 might not be supported on all systems/drivers
+                        });
+                        const line = new THREE.Line(geometry, material);
+                        rayGroupThree.add(line);
+                    });
+                }
+            }
+
+            let lastRenderTime = 0;
+            const targetFPS = 30; // Target FPS
+            const renderInterval = 1000 / targetFPS; // Interval in ms
+
+            function animate(currentTime) {
+                requestAnimationFrame(animate);
+                const deltaTime = currentTime - lastRenderTime;
+                if (deltaTime < renderInterval) { return; } // Skip frame if not enough time has passed
+                lastRenderTime = currentTime - (deltaTime % renderInterval); // Adjust for exact interval timing
+
+                if (threeRenderer && threeScene && threeCamera) {
+                    threeRenderer.render(threeScene, threeCamera);
+                }
+            }
+
+            function showConfirmationModal(message, callback) {
+                modalMessageText.textContent = message;
+                confirmationModal.style.display = 'flex';
+                currentModalAction = callback;
+            }
+
+            modalConfirmButton.onclick = () => {
+                if (currentModalAction) currentModalAction(true);
+                confirmationModal.style.display = 'none';
+            };
+
+            modalCancelButton.onclick = () => {
+                if (currentModalAction) currentModalAction(false);
+                confirmationModal.style.display = 'none';
+            };
+
+
+            function setupEventListeners() {
+                const sliders = [
+                    "soundSourceX", "soundSourceY", "soundSourceZ",
+                    "listenerX", "listenerY", "listenerZ",
+                    "numRaysSlider", "rayOpacitySlider", "maxBouncesSlider", "volumeSlider",
+                    "wallOpacitySlider", "debounceTimeSlider", "explorationFactorSlider"
+                ];
+                sliders.forEach(id => {
+                    const slider = document.getElementById(id);
+                    const valueSpanId = id.replace("Slider", "") + "Value";
+                    const valueSpan = document.getElementById(valueSpanId);
+                    if (slider) {
+                        // Set initial step values correctly (some were missing explicit steps)
+                        if (id === "numRaysSlider") { slider.step = "100"; slider.max = "100000"; }
+                        else if (id === "maxBouncesSlider") { slider.step = "1"; slider.max = "100"; }
+                        else if (id === "debounceTimeSlider") slider.step = "10";
+                        else if (id.includes("Opacity") || id === "volumeSlider") slider.step = "0.01";
+                        else if (id === "explorationFactorSlider") slider.step = "0.1";
+                        else slider.step = "0.1"; // Default step for position sliders
+
+                        // Update initial display value
+                        if (valueSpan) {
+                             if (id.includes("Opacity") || id === "volumeSlider" || id === "explorationFactorSlider") {
+                                valueSpan.textContent = parseFloat(slider.value).toFixed(id === "explorationFactorSlider" ? 1: 2);
+                            } else if (id.includes("X") || id.includes("Y") || id.includes("Z")) {
+                                valueSpan.textContent = parseFloat(slider.value).toFixed(1);
+                            }
+                             else { // For integer sliders like numRays, maxBounces
+                                valueSpan.textContent = slider.value;
+                            }
+                        }
+                        slider.addEventListener("input", (event) => {
+                            const value = parseFloat(event.target.value);
+                            if (valueSpan) {
+                                 if (id.includes("Opacity") || id === "volumeSlider" || id === "explorationFactorSlider") {
+                                    valueSpan.textContent = value.toFixed(id === "explorationFactorSlider" ? 1: 2);
+                                } else if (id.includes("X") || id.includes("Y") || id.includes("Z")) {
+                                    valueSpan.textContent = value.toFixed(1);
+                                }
+                                 else { // For integer sliders
+                                    valueSpan.textContent = Math.round(value);
+                                }
+                            }
+                            if (window.goUpdateSliderValue) {
+                                window.goUpdateSliderValue(id.replace("Slider", ""), value);
+                            }
+                        });
+                    }
+                });
+
+                const toggle = document.getElementById("showOnlyListenerRaysToggle");
+                if (toggle) {
+                    toggle.addEventListener("change", (event) => {
+                        if (!event.target.checked) { // If trying to uncheck (show all rays)
+                            showConfirmationModal(
+                                "Showing all rays can significantly impact performance, especially with high ray counts. Are you sure?",
+                                (confirmed) => {
+                                    if (confirmed) {
+                                        if (window.goUpdateToggleValue) {
+                                            window.goUpdateToggleValue("showOnlyListenerRays", event.target.checked);
+                                        }
+                                    } else {
+                                        event.target.checked = true; // Revert checkbox if cancelled
+                                    }
+                                }
+                            );
+                        } else { // If checking (show only listener rays), proceed without confirmation
+                             if (window.goUpdateToggleValue) {
+                                window.goUpdateToggleValue("showOnlyListenerRays", event.target.checked);
+                            }
+                        }
+                    });
+                }
+
+                const manualVisualizeButton = document.getElementById("manualVisualizeButton");
+                if (manualVisualizeButton) {
+                    manualVisualizeButton.addEventListener("click", () => {
+                        if (window.goTriggerVisualizeSound) window.goTriggerVisualizeSound();
+                    });
+                }
+
+                const clearRaysButton = document.getElementById("clearRaysButton");
+                if (clearRaysButton) {
+                    clearRaysButton.addEventListener("click", () => {
+                        if (window.goTriggerClearRays) window.goTriggerClearRays();
+                    });
+                }
+
+                const toggleLearningBtn = document.getElementById("toggleLearningButton");
+                if(toggleLearningBtn) {
+                    toggleLearningBtn.addEventListener("click", () => {
+                        console.log("JS: Toggle Learning Button Clicked. Current text:", toggleLearningBtn.textContent);
+                        if (toggleLearningBtn.textContent.startsWith("Start")) {
+                             if(window.goStartLearningMode) {
+                                console.log("JS: Calling goStartLearningMode");
+                                window.goStartLearningMode();
+                             } else { console.error("JS: goStartLearningMode not found");}
+                        } else {
+                             if(window.goStopLearningMode) {
+                                console.log("JS: Calling goStopLearningMode");
+                                window.goStopLearningMode();
+                             } else { console.error("JS: goStopLearningMode not found");}
+                        }
+                    });
+                }
+
+
+                const toggleControlsBtn = document.getElementById("toggleControlsButton");
+                const controlsPanel = document.getElementById("controlsPanel");
+                if (toggleControlsBtn && controlsPanel) {
+                    toggleControlsBtn.addEventListener("click", () => {
+                        if (controlsPanel.style.display === "none") {
+                            controlsPanel.style.display = "block";
+                            toggleControlsBtn.textContent = "Hide Controls";
+                        } else {
+                            controlsPanel.style.display = "none";
+                            toggleControlsBtn.textContent = "Show Controls";
+                        }
+                        onWindowResize(); // Adjust canvas size after panel toggle
+                    });
+                }
+                window.addEventListener('resize', onWindowResize, false);
+            }
+
+            function setupMouseControls() {
+                canvasElement.addEventListener('mousedown', onMouseDown, false);
+                document.addEventListener('mousemove', onMouseMove, false); // Listen on document for dragging outside canvas
+                document.addEventListener('mouseup', onMouseUp, false);   // Listen on document
+                canvasElement.addEventListener('wheel', onMouseWheel, { passive: false }); // Allow preventDefault
+            }
+
+            function updateMouseNDC(event) {
+                const rect = canvasElement.getBoundingClientRect();
+                mouseNDC.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                mouseNDC.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            }
+
+            function onMouseDown(event) {
+                updateMouseNDC(event);
+                previousMouseCanvasPosition.x = event.clientX;
+                previousMouseCanvasPosition.y = event.clientY;
+
+                dragRaycaster.setFromCamera(mouseNDC, threeCamera);
+
+                let intersectedDraggable = null;
+                const draggableMeshes = [];
+                if (threeSoundSourceMesh) draggableMeshes.push(threeSoundSourceMesh);
+                if (threeListenerMesh) draggableMeshes.push(threeListenerMesh);
+
+                if (draggableMeshes.length > 0) {
+                    const intersects = dragRaycaster.intersectObjects(draggableMeshes, false); // Non-recursive
+                     for (let i = 0; i < intersects.length; i++) {
+                        if (intersects[i].object.userData.isDraggable) {
+                            intersectedDraggable = intersects[i].object;
+                            break;
+                        }
+                    }
+                }
+
+                if (intersectedDraggable) {
+                    selectedDraggableObject = intersectedDraggable;
+                    // Create a plane parallel to XZ at the object's current Y, or view plane
+                    // For simplicity, let's use a plane coplanar with the object and normal to camera view direction,
+                    // or a horizontal plane if easier. For now, horizontal plane at object's Y.
+                    dragPlane.setFromNormalAndCoplanarPoint(new THREE.Vector3(0, 1, 0), selectedDraggableObject.position);
+
+                    if (dragRaycaster.ray.intersectPlane(dragPlane, dragIntersection)) {
+                        dragOffset.copy(dragIntersection).sub(selectedDraggableObject.position);
+                    }
+                    canvasElement.style.cursor = 'grabbing';
+                    isCameraOrbiting = false; // Prioritize object dragging over camera orbiting
+                    return; // Don't proceed to camera orbiting if an object is selected
+                }
+                isCameraOrbiting = true; // If no draggable object hit, then orbit camera
+                canvasElement.style.cursor = 'grabbing';
+            }
+
+            function onMouseMove(event) {
+                updateMouseNDC(event); // Update mouse position for raycaster
+
+                if (selectedDraggableObject) {
+                    dragRaycaster.setFromCamera(mouseNDC, threeCamera);
+                    if (dragRaycaster.ray.intersectPlane(dragPlane, dragIntersection)) {
+                        let newX = dragIntersection.x - dragOffset.x;
+                        let newY = selectedDraggableObject.position.y; // Keep Y fixed for now for simpler dragging
+                        let newZ = dragIntersection.z - dragOffset.z;
+
+                        // Clamp to room boundaries (approximate)
+                        const roomHalfWidth = 19.5; // Slightly less than roomWidth/2
+                        const roomHalfDepth = 19.5; // Slightly less than roomDepth/2
+                        const roomMaxY = 9.5;
+                        const roomMinY = 0.5; // Assuming objects are not on the absolute floor
+
+                        newX = Math.max(-roomHalfWidth, Math.min(roomHalfWidth, newX));
+                        newY = Math.max(roomMinY, Math.min(roomMaxY, newY)); // If Y dragging is enabled, clamp it
+                        newZ = Math.max(-roomHalfDepth, Math.min(roomHalfDepth, newZ));
+
+                        selectedDraggableObject.position.set(newX, newY, newZ);
+
+                        // Update Go and UI sliders
+                        if (selectedDraggableObject.name === "SoundSource") {
+                            if (window.goUpdateSoundSourcePositionAndVisualize) {
+                                window.goUpdateSoundSourcePositionAndVisualize(newX, newY, newZ);
+                            }
+                            document.getElementById('soundSourceX').value = newX.toFixed(1);
+                            document.getElementById('soundSourceXValue').textContent = newX.toFixed(1);
+                            // Update Y, Z sliders similarly if they are part of dragging
+                            document.getElementById('soundSourceY').value = newY.toFixed(1);
+                            document.getElementById('soundSourceYValue').textContent = newY.toFixed(1);
+                            document.getElementById('soundSourceZ').value = newZ.toFixed(1);
+                            document.getElementById('soundSourceZValue').textContent = newZ.toFixed(1);
+                        } else if (selectedDraggableObject.name === "Listener") {
+                             if (window.goUpdateListenerPositionAndVisualize) {
+                                window.goUpdateListenerPositionAndVisualize(newX, newY, newZ);
+                            }
+                            document.getElementById('listenerX').value = newX.toFixed(1);
+                            document.getElementById('listenerXValue').textContent = newX.toFixed(1);
+                            document.getElementById('listenerY').value = newY.toFixed(1);
+                            document.getElementById('listenerYValue').textContent = newY.toFixed(1);
+                            document.getElementById('listenerZ').value = newZ.toFixed(1);
+                            document.getElementById('listenerZValue').textContent = newZ.toFixed(1);
+                        }
+                    }
+                } else if (isCameraOrbiting) {
+                    const deltaX = event.clientX - previousMouseCanvasPosition.x;
+                    const deltaY = event.clientY - previousMouseCanvasPosition.y;
+
+                    // Simple orbit controls (around a fixed target, e.g., scene origin or avg room height)
+                    const target = new THREE.Vector3(0, 2, 0); // Camera target point
+                    threeCamera.position.sub(target); // Center camera position around origin for rotation
+
+                    const spherical = new THREE.Spherical().setFromVector3(threeCamera.position);
+                    spherical.theta -= deltaX * 0.005; // Horizontal rotation
+                    spherical.phi -= deltaY * 0.005;   // Vertical rotation
+                    spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi)); // Clamp vertical angle
+
+                    threeCamera.position.setFromSpherical(spherical);
+                    threeCamera.position.add(target); // Move camera back
+                    threeCamera.lookAt(target);
+
+                    if (window.goUpdateCameraState) { // Inform Go about camera changes
+                        window.goUpdateCameraState(
+                            threeCamera.position.x, threeCamera.position.y, threeCamera.position.z,
+                            target.x, target.y, target.z // Or pass actual lookAt target
+                        );
+                    }
+                }
+                previousMouseCanvasPosition.x = event.clientX;
+                previousMouseCanvasPosition.y = event.clientY;
+            }
+
+            function onMouseUp(event) {
+                selectedDraggableObject = null;
+                isCameraOrbiting = false;
+                canvasElement.style.cursor = 'grab';
+            }
+
+            function onMouseWheel(event) {
+                event.preventDefault(); // Prevent page scrolling
+                const zoomSpeed = 0.5; 
+                const direction = new THREE.Vector3();
+                threeCamera.getWorldDirection(direction); // Get camera's view direction
+
+                // Zoom along the view direction
+                const zoomAmount = event.deltaY < 0 ? zoomSpeed : -zoomSpeed; // deltaY is negative for scroll up/zoom in
+                threeCamera.position.addScaledVector(direction, zoomAmount);
+
+                if (window.goUpdateCameraState) { // Inform Go
+                    const target = new THREE.Vector3(0,2,0); // Assuming same target
+                    window.goUpdateCameraState(
+                        threeCamera.position.x, threeCamera.position.y, threeCamera.position.z,
+                        target.x, target.y, target.z
+                    );
+                }
+            }
+
+            function onWindowResize() {
+                if (canvasElement && threeCamera && threeRenderer) {
+                    const mainContainer = document.getElementById('mainContainer');
+                    const controlsPanel = document.getElementById('controlsPanel');
+                    let canvasWidth = mainContainer.clientWidth;
+                    // Adjust canvas width if controls panel is visible
+                    if (controlsPanel.style.display !== 'none' && controlsPanel.offsetWidth > 0) { 
+                        canvasWidth -= controlsPanel.offsetWidth;
+                    }
+                    canvasWidth = Math.max(10, canvasWidth); // Ensure minimum width
+
+                    const canvasHeight = mainContainer.clientHeight; // Canvas takes full height of container
+
+                    threeCamera.aspect = canvasWidth / canvasHeight;
+                    threeCamera.updateProjectionMatrix();
+                    threeRenderer.setSize(canvasWidth, canvasHeight);
+                }
+            }
+
+            window.updateLegendOnPage = (legendData) => {
+                const legendDiv = document.getElementById("rayLegend");
+                if (!legendDiv) return;
+                legendDiv.innerHTML = '<p class="text-sm font-semibold mb-1">Ray Legend:</p>'; // Clear and add title
+
+                legendData.forEach(item => {
+                    const colorInt = parseInt(item.color); // Color from Go is float64, treat as int for hex
+                    const colorHex = "#" + colorInt.toString(16).padStart(6, '0'); // Ensure 6 digits
+                    const legendItemDiv = document.createElement('div');
+                    legendItemDiv.className = 'legend-item';
+                    legendItemDiv.innerHTML = `
+                        <div class="legend-color-box" style="background-color: ${colorHex};"></div>
+                        <span class="text-xs">${item.label}</span>
+                    `;
+                    legendDiv.appendChild(legendItemDiv);
+                });
+            };
+
+            loadWasm();
+        } 
+
+        window.onload = initializeApp;
+
+    </script>
+</body>
+</html>
