@@ -71,11 +71,11 @@ Follow these instructions to get a copy of the project up and running on your lo
 
 2.  **Copy `wasm_exec.js` into your project's root directory:**
     This file is required to run Go WASM modules.\
-    **A.** If you are using Go version 1.23 or higher, the wasm_exec.js file that must be copied into your project will be found in `lib/wasm` in your Go installation's direcory. Copy it from `lib/wasm` into the project root.
+    **A.** If you are using Go version *1.23 or higher*, the wasm_exec.js file that must be copied into your project will be found in `lib/wasm` in your Go installation's direcory. Copy it from `lib/wasm` into the project root.
     ```bash
     cp $(go env GOROOT)/lib/wasm/wasm_exec.js .
     ```
-    **B.** If you are using a version of Go lower than 1.23, copy it from your Go installation's `misc/wasm` directory into the project root.
+    **B.** If you are using a version of Go *lower than 1.23*, copy it from your Go installation's `misc/wasm` directory into the project root.
     ```bash
     cp $(go env GOROOT)/misc/wasm/wasm_exec.js .
     ```
