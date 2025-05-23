@@ -65,7 +65,7 @@ Follow these instructions to get a copy of the project up and running on your lo
 
 1.  **Clone the repository:**
     ```bash
-    git clone https://your_repository_link_here.git
+    git clone https://github.com/visualizing-sound-reflection.git
     cd your_project_directory
     ```
 
@@ -78,16 +78,14 @@ Follow these instructions to get a copy of the project up and running on your lo
 3.  **Build the WebAssembly Module:**
     Compile the Go source files into `main.wasm`. Ensure all `.go` files intended for the WASM build (e.g., `main.go`, `vecmath.go`, `scene.go`, `raycaster.go`, `optimization.go`, `records.go`) are present in the directory.
     ```bash
-    GOOS=js GOARCH=wasm go build -o main.wasm main.go vecmath.go scene.go raycaster.go optimization.go records.go
+    GOOS=js GOARCH=wasm go build -o main.wasm .
     ```
-    *(Note: Exclude `server.go` from this WASM build command if its `main` function would conflict).*
 
 4.  **Run the Local Development Server:**
     The provided `server.go` can be used to serve the project files.
     ```bash
-    go run server.go
+    go run ./cmd/server/main.go
     ```
-    This will typically start a server on `http://localhost:8080`.
 
 5.  **Open in Browser:**
     Navigate to `http://localhost:8080` in your web browser.
